@@ -2,7 +2,7 @@
 
 import asyncio
 import contextlib
-from datetime import datetime
+from datetime import datetime, timezone
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -63,7 +63,9 @@ class _ServerQueryConnection:
             return
         self._reader, self._writer = await asyncio.open_connection(self._host, self._port)
 
-        await self._read_until_error_line()
+        # На ServerQuery после подключения приходит banner (без error-строки),
+        # поэтому его нужно просто "досчитать", а не ждать error id=...
+        await self._drain_banner()
         await self.command(
             f"login client_login_name={encode_value(self._login)} client_login_password={encode_value(self._password)}"
         )
@@ -103,6 +105,18 @@ class _ServerQueryConnection:
             lines.append(line)
             if line.startswith("error"):
                 return lines
+
+    async def _drain_banner(self) -> None:
+        """Считывает стартовый banner TS3 без ожидания error-строки."""
+        if not self.is_connected:
+            return
+        for _ in range(6):
+            try:
+                line = await asyncio.wait_for(self.read_line(), timeout=0.35)
+            except TimeoutError:
+                break
+            if not line:
+                break
 
 
 class TeamSpeakServerQueryAdapter:
@@ -286,7 +300,7 @@ class TeamSpeakServerQueryAdapter:
         else:
             event_name, payload_raw = line, ""
         payload = parse_kv_segment(payload_raw)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         if event_name == "notifycliententerview":
             return TS3EventDTO(

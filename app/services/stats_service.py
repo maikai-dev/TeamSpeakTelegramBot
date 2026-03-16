@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,7 +74,7 @@ class StatsService:
         if not rows:
             return "Нет привязанных TS3-профилей для подсчета сообщений."
 
-        start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         lines = ["?? Ваши сообщения за сегодня"]
         total = 0
         for client_id, nickname in rows:
@@ -269,7 +269,7 @@ class StatsService:
         return "\n".join(f"- {name}: ~{count} совместных пересечений" for name, count in rows)
 
     def _period_start(self, period: PeriodType) -> datetime | None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if period == PeriodType.DAY:
             return now - timedelta(days=1)
         if period == PeriodType.WEEK:

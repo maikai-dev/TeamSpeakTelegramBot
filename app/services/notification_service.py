@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -51,7 +51,7 @@ class NotificationService:
             return
 
         admin_ids = await self._user_repo.list_admin_telegram_ids(session)
-        now_dt = datetime.utcnow()
+        now_dt = datetime.now(timezone.utc)
         for telegram_id in admin_ids:
             user = await self._user_repo.get_by_telegram_id(session, telegram_id)
             if not user:
@@ -139,6 +139,15 @@ class NotificationService:
             notification_type=notification_type,
             enabled=enabled,
         )
+
+    async def is_enabled(
+        self,
+        session: AsyncSession,
+        user_id: int,
+        notification_type: NotificationType,
+    ) -> bool:
+        setting = await self._notification_repo.get_or_create_setting(session, user_id, notification_type)
+        return bool(setting.enabled)
 
     async def _safe_send(self, telegram_id: int, text: str) -> None:
         try:

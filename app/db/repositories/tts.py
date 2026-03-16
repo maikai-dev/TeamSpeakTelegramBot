@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import asc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,18 +41,18 @@ class TTSRepository:
 
     async def mark_processing(self, session: AsyncSession, job: TTSJob) -> None:
         job.status = TTSJobStatus.PROCESSING
-        job.started_at = datetime.utcnow()
+        job.started_at = datetime.now(timezone.utc)
         job.attempt_count += 1
 
     async def mark_done(self, session: AsyncSession, job: TTSJob, audio_path: str | None = None) -> None:
         job.status = TTSJobStatus.DONE
         job.audio_path = audio_path
-        job.finished_at = datetime.utcnow()
+        job.finished_at = datetime.now(timezone.utc)
 
     async def mark_failed(self, session: AsyncSession, job: TTSJob, error_message: str) -> None:
         job.status = TTSJobStatus.FAILED
         job.error_message = error_message[:1024]
-        job.finished_at = datetime.utcnow()
+        job.finished_at = datetime.now(timezone.utc)
 
     async def get_by_id(self, session: AsyncSession, job_id: int) -> TTSJob | None:
         stmt = select(TTSJob).where(TTSJob.id == job_id)

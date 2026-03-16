@@ -122,6 +122,10 @@ async def cmd_subscribe(message: Message, services: ServiceContainer, session, u
         return
 
     target_id, label = await services.teamspeak.find_client_for_subscription(session, pattern)
+    if target_id is None:
+        await message.answer("Пользователь не найден в онлайне/истории, подписку создать нельзя.")
+        return
+
     await services.notifications.subscribe_user_online(
         session=session,
         subscriber_user_id=user.id,
@@ -139,6 +143,10 @@ async def cmd_favuser(message: Message, services: ServiceContainer, session, use
         return
 
     target_id, label = await services.teamspeak.find_client_for_subscription(session, pattern)
+    if target_id is None:
+        await message.answer("Пользователь не найден в онлайне/истории, добавить в избранное нельзя.")
+        return
+
     await services.notifications.subscribe_user_online(
         session=session,
         subscriber_user_id=user.id,

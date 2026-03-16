@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import uuid
+import time
 from collections.abc import Callable
 
 from aiogram import F, Router
@@ -24,6 +25,7 @@ class SayStates(StatesGroup):
 
 
 _PENDING_ACTIONS: dict[str, dict] = {}
+_PENDING_ACTION_TTL_SECONDS = 300
 
 
 def _extract_args(text: str | None) -> str:
@@ -74,9 +76,20 @@ def _build_confirm_keyboard(token: str) -> InlineKeyboardMarkup:
 
 
 async def _enqueue_action(action: dict) -> str:
+    _cleanup_pending_actions()
     token = uuid.uuid4().hex[:10]
-    _PENDING_ACTIONS[token] = action
+    _PENDING_ACTIONS[token] = {
+        "expires_at": time.monotonic() + _PENDING_ACTION_TTL_SECONDS,
+        "action": action,
+    }
     return token
+
+
+def _cleanup_pending_actions() -> None:
+    now = time.monotonic()
+    expired = [token for token, payload in _PENDING_ACTIONS.items() if payload.get("expires_at", 0) <= now]
+    for token in expired:
+        _PENDING_ACTIONS.pop(token, None)
 
 
 @router.message(Command("admin"))
@@ -91,15 +104,19 @@ async def cmd_alerts(message: Message, services: ServiceContainer, session, user
     if not await _ensure_admin(message, services, session, user, AdminActionType.RELOAD_CONFIG):
         return
 
-    lines = ["🔔 Управление алертами:"]
-    for nt in [NotificationType.JOIN, NotificationType.LEAVE, NotificationType.MOVE, NotificationType.CHAT]:
+    tracked = [NotificationType.JOIN, NotificationType.LEAVE, NotificationType.MOVE, NotificationType.CHAT]
+    current = [await services.notifications.is_enabled(session, user.id, nt) for nt in tracked]
+    new_state = not all(current)
+
+    lines = [f"🔔 Управление алертами: {'включено' if new_state else 'выключено'}"]
+    for nt in tracked:
         await services.notifications.toggle_notification(
             session=session,
             user_id=user.id,
             notification_type=nt,
-            enabled=True,
+            enabled=new_state,
         )
-        lines.append(f"- {nt.value}: включено")
+        lines.append(f"- {nt.value}: {'включено' if new_state else 'выключено'}")
     lines.append("Точная настройка quiet hours доступна через таблицу notification_settings.")
     await message.answer("\n".join(lines))
 
@@ -315,8 +332,10 @@ async def cmd_move(message: Message, services: ServiceContainer, session, user, 
 
 
 @router.message(Command("poke"))
-async def cmd_poke(message: Message, services: ServiceContainer, session, user) -> None:
+async def cmd_poke(message: Message, services: ServiceContainer, session, user, settings) -> None:
     if not await _ensure_admin(message, services, session, user, AdminActionType.POKE):
+        return
+    if not await _check_sensitive_rate(message, services, settings):
         return
     args = _extract_args(message.text)
     parts = args.split(maxsplit=1)
@@ -325,22 +344,91 @@ async def cmd_poke(message: Message, services: ServiceContainer, session, user) 
         return
 
     pattern, poke_message = parts[0], parts[1]
-    candidates = await services.teamspeak.find_online_clients(pattern)
-    if not candidates:
-        await message.answer("Пользователь не найден онлайн")
+    await _select_client_action(
+        message,
+        services,
+        pattern,
+        lambda clid, nickname: {
+            "type": "poke",
+            "clid": clid,
+            "nickname": nickname,
+            "reason": poke_message,
+            "admin_user_id": user.id,
+            "admin_tg_id": user.telegram_id,
+        },
+    )
+
+
+@router.callback_query(F.data.startswith("admin_action:"))
+async def cb_admin_action(callback: CallbackQuery, services: ServiceContainer, session, user, settings) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    if not await services.permission.is_admin(session, user):
+        await callback.answer("Нет прав", show_alert=True)
+        return
+    if not await _check_sensitive_rate(callback.message, services, settings):
+        await callback.answer()
         return
 
-    target = candidates[0]
-    await services.teamspeak.poke_client(target.clid, poke_message)
-    await services.audit.log(
-        session,
-        admin_user_id=user.id,
-        action_type=AdminActionType.POKE,
-        success=True,
-        target_label=target.nickname,
-        reason=poke_message,
+    # Формат: admin_action:<kind>:<clid>:<payload>
+    parts = callback.data.split(":", 3)
+    if len(parts) < 4:
+        await callback.answer("Некорректное действие", show_alert=True)
+        return
+    _, kind, clid_raw, payload = parts
+    try:
+        clid = int(clid_raw)
+    except ValueError:
+        await callback.answer("Некорректный clid", show_alert=True)
+        return
+
+    info = await services.teamspeak.get_client_info(clid)
+    nickname = info.get("client_nickname") or f"clid:{clid}"
+
+    if kind == "kick":
+        action = {
+            "type": "kick",
+            "clid": clid,
+            "nickname": nickname,
+            "reason": payload or "kick via telegram",
+            "admin_user_id": user.id,
+            "admin_tg_id": user.telegram_id,
+        }
+    elif kind == "ban":
+        try:
+            duration = max(1, int(payload))
+        except ValueError:
+            await callback.answer("Некорректная длительность бана", show_alert=True)
+            return
+        action = {
+            "type": "ban",
+            "clid": clid,
+            "nickname": nickname,
+            "reason": "ban via telegram",
+            "duration": duration,
+            "admin_user_id": user.id,
+            "admin_tg_id": user.telegram_id,
+        }
+    elif kind == "poke":
+        action = {
+            "type": "poke",
+            "clid": clid,
+            "nickname": nickname,
+            "reason": payload or "Привет",
+            "admin_user_id": user.id,
+            "admin_tg_id": user.telegram_id,
+        }
+    else:
+        await callback.answer("Неизвестное действие", show_alert=True)
+        return
+
+    token = await _enqueue_action(action)
+    await callback.message.answer(
+        f"Подтвердите действие {kind} для {nickname}",
+        reply_markup=_build_confirm_keyboard(token),
     )
-    await message.answer(f"Poke отправлен: {target.nickname}")
+    await callback.answer()
 
 
 @router.message(Command("mute"))
@@ -455,11 +543,16 @@ async def cmd_reload_config(message: Message, services: ServiceContainer, sessio
 
 @router.callback_query(F.data.startswith("admin_confirm:"))
 async def cb_admin_confirm(callback: CallbackQuery, services: ServiceContainer, session, user) -> None:
+    _cleanup_pending_actions()
     token = callback.data.split(":", 1)[1]
-    action = _PENDING_ACTIONS.pop(token, None)
-    if not action:
+    action_payload = _PENDING_ACTIONS.pop(token, None)
+    if not action_payload:
         await callback.answer("Сессия действия истекла", show_alert=True)
         return
+    if action_payload.get("expires_at", 0) <= time.monotonic():
+        await callback.answer("Сессия действия истекла", show_alert=True)
+        return
+    action = action_payload["action"]
 
     if user.telegram_id != action.get("admin_tg_id"):
         await callback.answer("Подтверждать может только инициатор", show_alert=True)
@@ -474,6 +567,7 @@ async def cb_admin_confirm(callback: CallbackQuery, services: ServiceContainer, 
         "ban": AdminActionType.BAN,
         "move": AdminActionType.MOVE,
         "mute": AdminActionType.MUTE,
+        "poke": AdminActionType.POKE,
         "groupadd": AdminActionType.ASSIGN_GROUP,
         "groupdel": AdminActionType.REMOVE_GROUP,
     }
@@ -491,6 +585,8 @@ async def cb_admin_confirm(callback: CallbackQuery, services: ServiceContainer, 
             await services.teamspeak.move_client(clid, int(action["channel_id"]))
         elif kind == "mute":
             await services.teamspeak.set_client_mute(clid, True)
+        elif kind == "poke":
+            await services.teamspeak.poke_client(clid, action["reason"])
         elif kind == "groupadd":
             await services.teamspeak.assign_group_by_clid(clid, int(action["sgid"]))
         elif kind == "groupdel":
@@ -526,6 +622,7 @@ async def cb_admin_confirm(callback: CallbackQuery, services: ServiceContainer, 
 
 @router.callback_query(F.data.startswith("admin_cancel:"))
 async def cb_admin_cancel(callback: CallbackQuery) -> None:
+    _cleanup_pending_actions()
     token = callback.data.split(":", 1)[1]
     _PENDING_ACTIONS.pop(token, None)
     await callback.answer("Отменено")

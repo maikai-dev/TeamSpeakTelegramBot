@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import String, case, desc, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,7 @@ from app.db.models import ChatMessage, ServerSnapshot, Session, TS3Client
 
 class StatsRepository:
     def _period_start(self, period: PeriodType) -> datetime | None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if period == PeriodType.DAY:
             return now - timedelta(days=1)
         if period == PeriodType.WEEK:

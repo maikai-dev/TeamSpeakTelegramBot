@@ -3,6 +3,7 @@
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 
 from app.bot.keyboards import admin_menu, user_main_menu
 from app.core.constants import COMMANDS_ADMIN, COMMANDS_USER
@@ -37,17 +38,20 @@ async def cmd_help(message: Message, services: ServiceContainer, session, user) 
 
 @router.message(Command("ping"))
 async def cmd_ping(message: Message, services: ServiceContainer, session) -> None:
-    db_ok = True
+    db_ok = False
     ts_ok = True
     redis_ok = await services.runtime.ping()
+
+    try:
+        await session.execute(select(1))
+        db_ok = True
+    except Exception:
+        db_ok = False
 
     try:
         await services.teamspeak.get_channels()
     except Exception:
         ts_ok = False
-
-    if session is None:
-        db_ok = False
 
     await message.answer(
         "\n".join(

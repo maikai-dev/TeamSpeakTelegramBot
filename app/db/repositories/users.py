@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,7 +58,7 @@ class UserRepository:
             user.username = username
             user.full_name = full_name
             user.language_code = language_code
-            user.last_seen_at = datetime.utcnow()
+            user.last_seen_at = datetime.now(timezone.utc)
         return user
 
     async def assign_role(

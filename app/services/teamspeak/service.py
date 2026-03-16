@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,7 +99,7 @@ class TeamSpeakService:
         await self.remove_group(cldbid, sgid)
 
     async def sync_presence(self, session: AsyncSession) -> None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         await self._adapter.ensure_connected()
         online_clients = await self._adapter.get_online_clients()
         current: dict[str, PresenceState] = {}

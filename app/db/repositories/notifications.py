@@ -75,6 +75,11 @@ class NotificationRepository:
         target_label: str | None,
         channel_id: int | None,
     ) -> Subscription:
+        if subscription_type == SubscriptionType.USER_ONLINE and target_ts3_client_id is None:
+            raise ValueError("target_ts3_client_id обязателен для USER_ONLINE")
+        if subscription_type == SubscriptionType.CHANNEL_ACTIVITY and channel_id is None:
+            raise ValueError("channel_id обязателен для CHANNEL_ACTIVITY")
+
         stmt = select(Subscription).where(
             Subscription.subscriber_user_id == subscriber_user_id,
             Subscription.subscription_type == subscription_type,

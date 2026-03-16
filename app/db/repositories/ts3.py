@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import and_, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +41,7 @@ class TS3Repository:
                 client_uid=client_uid,
                 nickname=nickname,
                 client_database_id=client_database_id,
-                last_seen_at=datetime.utcnow(),
+                last_seen_at=datetime.now(timezone.utc),
                 last_channel_id=channel_id,
                 last_channel_name=channel_name,
             )
@@ -51,7 +51,7 @@ class TS3Repository:
 
         client.nickname = nickname
         client.client_database_id = client_database_id
-        client.last_seen_at = datetime.utcnow()
+        client.last_seen_at = datetime.now(timezone.utc)
         client.last_channel_id = channel_id
         client.last_channel_name = channel_name
         return client
@@ -182,7 +182,7 @@ class TS3Repository:
         return list(result.scalars().all())
 
     async def get_top_online_today(self, session: AsyncSession, limit: int = 10) -> list[tuple[str, int]]:
-        day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         duration_expr = func.coalesce(
             Session.duration_seconds,
             func.extract("epoch", func.now() - Session.started_at),
@@ -199,7 +199,7 @@ class TS3Repository:
         return [(name, int(seconds or 0)) for name, seconds in result.all()]
 
     async def get_messages_today_by_user(self, session: AsyncSession, ts3_client_id: int) -> int:
-        day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         stmt = select(func.count(ChatMessage.id)).where(
             ChatMessage.ts3_client_id == ts3_client_id,
             ChatMessage.occurred_at >= day_start,
@@ -207,7 +207,7 @@ class TS3Repository:
         return int((await session.execute(stmt)).scalar_one() or 0)
 
     async def list_active_sessions_over_hours(self, session: AsyncSession, hours: int) -> list[Session]:
-        threshold = datetime.utcnow().timestamp() - (hours * 3600)
+        threshold = datetime.now(timezone.utc).timestamp() - (hours * 3600)
         stmt = select(Session).where(
             and_(
                 Session.ended_at.is_(None),
