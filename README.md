@@ -311,3 +311,8 @@ tests/
 - rate limiter
 - статистические утилиты
 - TS3 query codec
+
+## 11. Лицензия
+
+Проект распространяется под лицензией Apache License 2.0.  
+См. файл [LICENSE](LICENSE).
