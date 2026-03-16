@@ -1,0 +1,53 @@
+﻿services:
+  postgres:
+    image: postgres:16
+    container_name: ts3bot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ts3bot
+      POSTGRES_USER: ts3bot
+      POSTGRES_PASSWORD: ts3bot
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ts3bot -d ts3bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ts3bot-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  bot:
+    build:
+      context: .
+      dockerfile: docker/bot.Dockerfile
+    container_name: ts3bot-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./docker:/app/docker
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./scripts:/app/scripts
+      - ./tmp_tts:/tmp/tts-audio
+
+volumes:
+  postgres_data:
